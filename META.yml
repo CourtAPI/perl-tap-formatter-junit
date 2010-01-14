@@ -1,6 +1,6 @@
 ---
 name: TAP-Formatter-JUnit
-version: 0.03
+version: 0.04
 author:
   - Graham TerMarsch (cpan@howlingfrog.com)
 abstract: Harness output delegate for JUnit output
@@ -16,10 +16,11 @@ build_requires:
   IO::Scalar: 0
   Test::Differences: 0
   Test::More: 0
+  Test::Output: 0.12
 provides:
   TAP::Formatter::JUnit:
     file: lib/TAP/Formatter/JUnit.pm
-    version: 0.03
+    version: 0.04
   TAP::Formatter::JUnit::Session:
     file: lib/TAP/Formatter/JUnit/Session.pm
 generated_by: Module::Build version 0.32
