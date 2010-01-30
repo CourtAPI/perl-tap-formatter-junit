@@ -7,7 +7,7 @@ use TAP::Formatter::JUnit::Session;
 use base qw(TAP::Formatter::Console);
 use Class::Field qw(field);
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 field 'testsuites'  => [];
 
@@ -174,6 +174,7 @@ Other thanks go out to those that have provided feedback, comments, or patches:
   Mark Aufflick
   Joe McMahon
   Michael Nachbaur
+  Marc Abramowitz
 
 =head1 COPYRIGHT
 
