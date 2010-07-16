@@ -77,12 +77,14 @@ sub close_test {
     $self->_flush_queue;
 
     # if the test died unexpectedly, make note of that
+    my $die_msg;
     my $exit = $parser->exit();
     if ($exit) {
         my $sys_err = $self->system_err;
-        my $wstat   = $self->parser->wait();
+        my $wstat   = $parser->wait();
         my $status  = sprintf( "%d (wstat %d, 0x%x)", $exit, $wstat, $wstat );
-        $sys_err .= "Dubious, test returned $status\n";
+        $die_msg  = "Dubious, test returned $status";
+        $sys_err .= "$die_msg\n";
         $self->system_err($sys_err);
     }
 
@@ -111,12 +113,23 @@ sub close_test {
 
     my $noplan   = $parser->plan() ? 0 : 1;
     my $planned  = $parser->tests_planned() || 0;
-    my $bad_exit = $parser->exit() ? 1 : 0;
 
-    my $errors   = 0;
-    $errors += $parser->todo_passed() unless $self->passing_todo_ok();
-    $errors += abs($testsrun - $planned) if ($planned);
-    $errors += ($noplan || $bad_exit);
+    my $num_errors = 0;
+    $num_errors += $parser->todo_passed() unless $self->passing_todo_ok();
+    $num_errors += abs($testsrun - $planned) if ($planned);
+
+    my $suite_err;
+    if ($die_msg) {
+        $suite_err = $xml->error( { message => $die_msg } );
+        $num_errors ++;
+    }
+    elsif ($noplan) {
+        $suite_err = $xml->error( { message => 'No plan in TAP output' } );
+        $num_errors ++;
+    }
+    elsif ($planned && ($testsrun != $planned)) {
+        $suite_err = $xml->error( { message => "Looks like you planned $planned tests but ran $testsrun." } );
+    }
 
     my @tests = @{$self->testcases()};
     my %attrs = (
@@ -124,9 +137,9 @@ sub close_test {
         'tests'     => $testsrun,
         (defined $time ? ('time'=>$time) : ()),
         'failures'  => $failures,
-        'errors'    => $errors,
+        'errors'    => $num_errors,
     );
-    my $testsuite = $xml->testsuite(\%attrs, @tests, $sys_out, $sys_err);
+    my $testsuite = $xml->testsuite(\%attrs, @tests, $sys_out, $sys_err, $suite_err);
     $self->formatter->add_testsuite($testsuite);
     $self->dump_junit_xml($testsuite);
 }
@@ -413,7 +426,7 @@ Graham TerMarsch <cpan@howlingfrog.com>
 
 =head1 COPYRIGHT
 
-Copyright 2008-2009, Graham TerMarsch.  All Rights Reserved.
+Copyright 2008-2010, Graham TerMarsch.  All Rights Reserved.
 
 This is free software; you can redistribute it and/or modify it under the same
 terms as Perl itself.

@@ -7,7 +7,7 @@ use TAP::Formatter::JUnit::Session;
 use base qw(TAP::Formatter::Console);
 use Class::Field qw(field);
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 field 'testsuites'  => [];
 
@@ -175,10 +175,12 @@ Other thanks go out to those that have provided feedback, comments, or patches:
   Joe McMahon
   Michael Nachbaur
   Marc Abramowitz
+  Colin Robertson
+  Phillip Kimmey
 
 =head1 COPYRIGHT
 
-Copyright 2008-2009, Graham TerMarsch.  All Rights Reserved.
+Copyright 2008-2010, Graham TerMarsch.  All Rights Reserved.
 
 This is free software; you can redistribute it and/or modify it under the same
 terms as Perl itself.
