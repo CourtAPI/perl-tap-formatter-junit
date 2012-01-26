@@ -3,9 +3,11 @@ Changes
 MANIFEST
 MANIFEST.SKIP
 META.yml
+META.json
 README
 bin/tap2junit
 lib/TAP/Formatter/JUnit.pm
+lib/TAP/Formatter/JUnit/Result.pm
 lib/TAP/Formatter/JUnit/Session.pm
 t/formatter.t
 t/passing-todos.t
@@ -104,5 +106,3 @@ t/data/tests/junit/todo
 t/data/tests/junit/todo_inline
 t/data/tests/junit/todo_misparse
 t/data/tests/junit/too_many
-t/data/timer/no-plan
-t/data/timer/planned

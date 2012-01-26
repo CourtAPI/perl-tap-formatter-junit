@@ -1,17 +1,42 @@
 package TAP::Formatter::JUnit::Session;
 
-use strict;
-use warnings;
-use base qw(TAP::Formatter::Console::Session);
-use Class::Field qw(field);
+use Moose;
+use MooseX::NonMoose;
+extends qw(
+    TAP::Formatter::Console::Session
+);
+
 use Storable qw(dclone);
 use File::Path qw(mkpath);
 use IO::File;
+use TAP::Formatter::JUnit::Result;
 
-field 'testcases'   => [];
-field 'system_out'  => '';
-field 'system_err'  => '';
-field 'passing_todo_ok' => 0;
+has 'testcases' => (
+    is      => 'rw',
+    isa     => 'ArrayRef',
+    default => sub { [] },
+    traits  => [qw( Array )],
+    handles => {
+        add_testcase  => 'push',
+        num_testcases => 'count',
+    },
+);
+
+has 'passing_todo_ok' => (
+    is      => 'rw',
+    isa     => 'Bool',
+    default => 0,
+);
+
+has '_queue' => (
+    is      => 'rw',
+    isa     => 'ArrayRef',
+    default => sub { [] },
+    traits  => [qw( Array )],
+    handles => {
+        _queue_add => 'push',
+    },
+);
 
 ###############################################################################
 # Subroutine:   _initialize($arg_for)
@@ -33,17 +58,9 @@ sub _initialize {
 ###############################################################################
 # Called by the harness for each line of TAP it receives.
 #
-# Internally, all of the TAP is added to a queue until we hit the start of the
-# "next" test (at which point we flush the queue.  This allows us to capture any
-# error output or diagnostic info that comes after a test failure.
+# Queues up all of the TAP output for later conversion to JUnit.
 sub result {
     my ($self, $result) = @_;
-
-    # add the raw output
-    $self->{system_out} .= $result->raw() . "\n";
-
-    # when we get the next test process the previous one
-    $self->_flush_queue if ($result->is_test && $self->{_junit_queue});
 
     # except for a few things we don't want to process as a "test case", add
     # the test result to the queue.
@@ -51,13 +68,11 @@ sub result {
              || ($result->raw() =~ /^# Looks like you planned \d+ tests? but ran \d+/)
              || ($result->raw() =~ /^# Looks like your test died before it could output anything/)
            ) {
-        push @{$self->{_junit_queue} ||= []}, $result;
-    }
-
-    # track the last time we saw a test/plan, so we can calculate how long it
-    # takes to run individual tests.
-    if ($result->is_test || $result->is_plan) {
-        $self->{_junit_t_last_test} = $self->get_time();
+        my $wrapped = TAP::Formatter::JUnit::Result->new(
+            'time'   => $self->get_time,
+            'result' => $result,
+        );
+        $self->_queue_add($wrapped);
     }
 }
 
@@ -70,30 +85,108 @@ sub result {
 # (if necessary), and adds the XML for this test suite to our formatter.
 sub close_test {
     my $self   = shift;
-    my $xml    = $self->xml();
-    my $parser = $self->parser();
+    my $xml    = $self->xml;
+    my $parser = $self->parser;
 
-    # flush out the queue, in case we've got more test results to add
-    $self->_flush_queue;
+    # Process the queued up TAP stream
+    my $is_first      = 1;
+    my $t_start       = $self->parser->start_time;
+    my $t_last_test   = $t_start;
+    my $timer_enabled = $self->formatter->timer;
+
+    my $queue = $self->_queue;
+    my $index = 0;
+    while ($index < @{$queue}) {
+        my $result = $queue->[$index++];
+
+        # First line of output generates the "init" timing.
+        if ($is_first) {
+            if ($timer_enabled) {
+                unless ($result->is_test) {
+                    my $duration = $result->time - $t_start;
+                    my $case     = $xml->testcase( {
+                        'name' => _squeaky_clean('(init)'),
+                        'time' => $duration,
+                    } );
+                    $self->add_testcase($case);
+                    $t_last_test = $result->time;
+                }
+            }
+            $is_first = 0;
+        }
+
+        # Test output
+        if ($result->is_test) {
+            # how long did it take for this test?
+            my $duration = $result->time - $t_last_test;
+
+            # slurp in all of the content up until the next test
+            my $content = $result->as_string;
+            while ($index < @{$queue}) {
+                last if ($queue->[$index]->is_test);
+                last if ($queue->[$index]->is_plan);
+
+                my $stuff = $queue->[$index++];
+                $content .= "\n" . $stuff->as_string;
+            }
+
+            # create a failure/error element if the test was bogus
+            my $failure;
+            my $bogosity = $self->_check_for_test_bogosity($result);
+            if ($bogosity) {
+                my $cdata = $self->_cdata($content);
+                my $level = $bogosity->{level};
+                $failure  = $xml->$level( {
+                    type    => $bogosity->{type},
+                    message => $bogosity->{message},
+                }, $cdata );
+            }
+
+            # add this test to the XML stream
+            my $case = $xml->testcase(
+                {
+                    'name' => _get_testcase_name($result),
+                    (
+                        $timer_enabled ? ('time' => $duration) : ()
+                    ),
+                },
+                $failure,
+            );
+            $self->add_testcase($case);
+
+            # update time of last test seen
+            $t_last_test = $result->time;
+        }
+    }
+
+    # track time for teardown, if needed
+    if ($timer_enabled) {
+        my $duration = $self->parser->end_time - $queue->[-1]->time;
+        my $case     = $xml->testcase( {
+            'name' => _squeaky_clean('(teardown)'),
+            'time' => $duration,
+        } );
+        $self->add_testcase($case);
+    }
+
+    # collect up all of the captured test output
+    my $captured = join '', map { $_->raw . "\n" } @{$queue};
 
     # if the test died unexpectedly, make note of that
     my $die_msg;
     my $exit = $parser->exit();
     if ($exit) {
-        my $sys_err = $self->system_err;
-        my $wstat   = $parser->wait();
-        my $status  = sprintf( "%d (wstat %d, 0x%x)", $exit, $wstat, $wstat );
+        my $wstat = $parser->wait();
+        my $status = sprintf("%d (wstat %d, 0x%x)", $exit, $wstat, $wstat);
         $die_msg  = "Dubious, test returned $status";
-        $sys_err .= "$die_msg\n";
-        $self->system_err($sys_err);
     }
 
     # add system-out/system-err data, as raw CDATA
     my $sys_out = 'system-out';
-    $sys_out = $xml->$sys_out($self->system_out() ? $self->_cdata($self->system_out) : undef);
+    $sys_out = $xml->$sys_out($captured ? $self->_cdata($captured) : undef);
 
     my $sys_err = 'system-err';
-    $sys_err = $xml->$sys_err($self->system_err() ? $self->_cdata($self->system_err) : undef);
+    $sys_err = $xml->$sys_err($die_msg ? $self->_cdata("$die_msg\n") : undef);
 
     # update the testsuite with aggregate info on this test suite
     #
@@ -108,7 +201,7 @@ sub close_test {
     #                 may not have a plan issued, but should still be considered
     #                 a single error condition)
     my $testsrun = $parser->tests_run() || 0;
-    my $time     = $self->formatter->timer ? $self->_time_taken() : undef;
+    my $time     = $parser->end_time() - $parser->start_time();
     my $failures = $parser->failed();
 
     my $noplan   = $parser->plan() ? 0 : 1;
@@ -133,11 +226,13 @@ sub close_test {
 
     my @tests = @{$self->testcases()};
     my %attrs = (
-        'name'      => _get_testsuite_name($self),
-        'tests'     => $testsrun,
-        (defined $time ? ('time'=>$time) : ()),
-        'failures'  => $failures,
-        'errors'    => $num_errors,
+        'name'     => _get_testsuite_name($self),
+        'tests'    => $testsrun,
+        'failures' => $failures,
+        'errors'   => $num_errors,
+        (
+            $timer_enabled ? ('time' => $time) : ()
+        ),
     );
     my $testsuite = $xml->testsuite(\%attrs, @tests, $sys_out, $sys_err, $suite_err);
     $self->formatter->add_testsuite($testsuite);
@@ -173,15 +268,6 @@ sub dump_junit_xml {
 }
 
 ###############################################################################
-# Subroutine:   add_testcase($case)
-###############################################################################
-# Adds an XML test '$case' to the list of testcases we've run in this session.
-sub add_testcase {
-    my ($self, $case) = @_;
-    push @{$self->{testcases}}, $case;
-}
-
-###############################################################################
 # Subroutine:   xml()
 ###############################################################################
 # Returns a new 'XML::Generator' to generate XML output.  This is simply a
@@ -192,118 +278,36 @@ sub xml {
 }
 
 ###############################################################################
-# Subroutine:   xml_unescape()
-###############################################################################
-# Returns a new 'XML::Generator' to generate unescaped XML output.  This is
-# simply a shortcut to '$self->formatter->xml_unescape()'.
-sub xml_unescape {
-    my $self = shift;
-    return $self->formatter->xml_unescape();
-}
+# Checks for bogosity in the test result.
+sub _check_for_test_bogosity {
+    my $self   = shift;
+    my $result = shift;
 
-###############################################################################
-# Calculate the time taken to parse the current test session.
-sub _time_taken {
-    my $self = shift;
-    my $t_st = $self->parser->start_time();
-    my $t_en = $self->parser->end_time();
-    my $t_diff = $t_en - $t_st;
-    return $t_diff;
-}
-
-###############################################################################
-# Calculate the time taken since the last test was seen in the TAP output.
-sub _time_since_last_test {
-    my $self = shift;
-    my $t_st = $self->{_junit_t_last_test} || $self->parser->start_time();
-    my $t_en = $self->get_time();
-    my $diff = $t_en - $t_st;
-    my $ret  = $self->{_junit_t_since_last_test} || 0;
-    $self->{_junit_t_since_last_test} = $diff;
-    return $ret;
-}
-
-###############################################################################
-# Flushes the queue of test results, item by item.
-sub _flush_queue {
-    my $self = shift;
-    my $queue = $self->{_junit_queue} ||= [];
-    $self->_flush_item while @$queue;
-}
-
-###############################################################################
-# Flushes a single test result item.
-#
-# If the item being flushed is a "test", grab everything that comes after it as
-# context or errors related to that test.
-sub _flush_item {
-    my $self = shift;
-    my $queue = $self->{_junit_queue};
-
-    # get the result
-    my $result = shift @$queue;
-
-    # add result to XML
-    my $xml = $self->xml();
-    if ($result->is_test) {
-        my %attrs = (
-            'name' => _get_testcase_name($result),
-            ($self->formatter->timer ? ('time'=>$self->_time_since_last_test) : ()),
-            );
-
-        # slurp in all the content up to the next test
-        my @content = $result->as_string();
-        while (@{$queue}) {
-            my $followup = shift @{$queue};
-            push @content, $followup->as_string();
-        }
-
-        # check for bogosity
-        my $bogosity;
-        if ($result->todo_passed() && !$self->passing_todo_ok()) {
-            $bogosity = {
-                level   => 'error',
-                type    => 'TodoTestSucceeded',
-                message => $result->explanation(),
-            };
-        }
-        elsif ($result->is_unplanned()) {
-            $bogosity = {
-                level   => 'error',
-                type    => 'UnplannedTest',
-                message => $result->as_string(),
-            };
-        }
-        elsif (not $result->is_ok()) {
-            $bogosity = {
-                level   => 'failure',
-                type    => 'TestFailed',
-                message => $result->as_string(),
-            };
-        }
-
-        # create a failure/error element if the test was bogus
-        my $failure;
-        if ($bogosity) {
-            my $cdata = $self->_cdata( join "\n", @content );
-            my $level = $bogosity->{level};
-            $failure  = $xml->$level( {
-                type    => $bogosity->{type},
-                message => $bogosity->{message},
-                }, $cdata );
-        }
-
-        # create the testcase element and add it to the suite.
-        my $testcase = $xml->testcase(\%attrs, $failure);
-        $self->add_testcase($testcase);
+    if ($result->todo_passed() && !$self->passing_todo_ok()) {
+        return {
+            level   => 'error',
+            type    => 'TodoTestSucceeded',
+            message => $result->explanation(),
+        };
     }
-    else {
-        # some sort of non-test output; ignore for now.
-        #
-        # we do, however, need to track the time since the last test, so that
-        # timings get calculated properly
-        $self->_time_since_last_test();
+
+    if ($result->is_unplanned()) {
+        return {
+            level   => 'error',
+            type    => 'UnplannedTest',
+            message => $result->as_string(),
+        };
     }
+
+    if (not $result->is_ok()) {
+        return {
+            level   => 'failure',
+            type    => 'TestFailed',
+            message => $result->as_string(),
+        };
+    }
+
+    return;
 }
 
 ###############################################################################
@@ -412,11 +416,6 @@ session.
 
 Returns a new C<XML::Generator> to generate XML output. This is simply a
 shortcut to C<$self-E<gt>formatter-E<gt>xml()>.
-
-=item B<xml_unescape()>
-
-Returns a new C<XML::Generator> to generate unescaped XML output. This is
-simply a shortcut to C<$self-E<gt>formatter-E<gt>xml_unescape()>.
 
 =back
 

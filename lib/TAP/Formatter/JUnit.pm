@@ -1,15 +1,39 @@
 package TAP::Formatter::JUnit;
 
-use strict;
-use warnings;
+use Moose;
+use MooseX::NonMoose;
+extends qw(
+    TAP::Formatter::Console
+);
+
 use XML::Generator;
 use TAP::Formatter::JUnit::Session;
-use base qw(TAP::Formatter::Console);
-use Class::Field qw(field);
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
-field 'testsuites'  => [];
+has 'testsuites' => (
+    is      => 'rw',
+    isa     => 'ArrayRef',
+    default => sub { [] },
+    traits  => [qw( Array )],
+    handles => {
+        add_testsuite => 'push',
+    },
+);
+
+has 'xml' => (
+    is         => 'rw',
+    isa        => 'XML::Generator',
+    lazy_build => 1,
+);
+sub _build_xml {
+    return XML::Generator->new(
+        ':pretty',
+        ':std',
+        'escape'   => 'always,high-bit,even-entities',
+        'encoding' => 'UTF-8',
+    );
+}
 
 ###############################################################################
 # Subroutine:   open_test($test, $parser)
@@ -21,9 +45,9 @@ field 'testsuites'  => [];
 sub open_test {
     my ($self, $test, $parser) = @_;
     my $session = TAP::Formatter::JUnit::Session->new( {
-        name        => $test,
-        formatter   => $self,
-        parser      => $parser,
+        name            => $test,
+        formatter       => $self,
+        parser          => $parser,
         passing_todo_ok => $ENV{ALLOW_PASSING_TODOS} ? 1 : 0,
     } );
     return $session;
@@ -39,50 +63,6 @@ sub summary {
 
     my @suites = @{$self->testsuites};
     print { $self->stdout } $self->xml->testsuites( @suites );
-}
-
-###############################################################################
-# Subroutine:   xml()
-###############################################################################
-# Returns a new 'XML::Generator', to generate XML output.
-sub xml {
-    my $self = shift;
-    unless ($self->{xml}) {
-        $self->{xml} = XML::Generator->new(
-            ':pretty',
-            ':std',
-            'escape'   => 'always,high-bit,even-entities',
-            'encoding' => 'UTF-8',
-        );
-    }
-    return $self->{xml};
-}
-
-###############################################################################
-# Subroutine:   xml_unescape()
-###############################################################################
-# Returns a new 'XML::Generator', to generate unescaped XML output.
-sub xml_unescape {
-    my $self = shift;
-    unless ($self->{xml_unescape}) {
-        $self->{xml_unescape} = XML::Generator->new(
-            ':pretty',
-            ':std',
-            'escape'   => 'unescaped',
-            'encoding' => 'UTF-8'
-        );
-    }
-    return $self->{xml_unescape};
-}
-
-###############################################################################
-# Subroutine:   add_testsuite($suite)
-###############################################################################
-# Adds the given XML test '$suite' to the list of test suites that we've
-# executed and need to summarize.
-sub add_testsuite {
-    my ($self, $suite) = @_;
-    push @{$self->testsuites}, $suite;
 }
 
 1;
@@ -132,6 +112,20 @@ The JUnit output generated is partial to being grokked by Hudson
 (L<http://hudson.dev.java.net/>).  That's the build tool I'm using at the
 moment and needed to be able to generate JUnit output for.
 
+=head1 ATTRIBUTES
+
+=over
+
+=item testsuites
+
+List-ref of test suites that have been executed.
+
+=item xml
+
+An C<XML::Generator> instance, to be used to generate XML output.
+
+=back
+
 =head1 METHODS
 
 =over
@@ -146,14 +140,6 @@ formatter session.
 =item B<summary($aggregate)>
 
 Prints the summary report (in JUnit) after all tests are run.
-
-=item B<xml()>
-
-Returns a new C<XML::Generator>, to generate XML output.
-
-=item B<xml_unescape()>
-
-Returns a new C<XML::Generator>, to generate unescaped XML output.
 
 =item B<add_testsuite($suite)>
 
@@ -177,6 +163,7 @@ Other thanks go out to those that have provided feedback, comments, or patches:
   Marc Abramowitz
   Colin Robertson
   Phillip Kimmey
+  Dave Lambley
 
 =head1 COPYRIGHT
 
