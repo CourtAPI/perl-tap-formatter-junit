@@ -11,8 +11,6 @@ lib/TAP/Formatter/JUnit/Result.pm
 lib/TAP/Formatter/JUnit/Session.pm
 t/formatter.t
 t/passing-todos.t
-t/pod.t
-t/pod-coverage.t
 t/tap2junit.t
 t/tap2junit-filter.t
 t/tap2junit-name.t
@@ -85,7 +83,6 @@ t/data/tests/todo_misparse
 t/data/tests/too_many
 t/data/tests/junit/bailout
 t/data/tests/junit/bad_chars
-t/data/tests/junit/bad_chars
 t/data/tests/junit/descriptive
 t/data/tests/junit/descriptive_trailing
 t/data/tests/junit/die
@@ -106,3 +103,6 @@ t/data/tests/junit/todo
 t/data/tests/junit/todo_inline
 t/data/tests/junit/todo_misparse
 t/data/tests/junit/too_many
+xt/pod.t
+xt/pod-coverage.t
+xt/timer.t
