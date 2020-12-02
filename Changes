@@ -1,5 +1,11 @@
 Revision history for Perl extension TAP::Formatter::JUnit.
 
+0.11.1  2020-12-01 [CourtAPI]
+    - Add support for TAP notes.  If present, these are added to the JUnit test results.
+      Currently supported:
+        - JUNIT-TEST-FILENAME: $value
+        - JUNIT-TEST-CLASSNAME: $value
+
 0.11    Wed Oct  1 13:26 PDT 2014
     - Use "IPC::Run" instead of "IPC::Open2" in tests, to fix problems with
       tests freezing on Windows.

@@ -8,6 +8,18 @@ has 'time' => (
     required => 1,
 );
 
+has 'classname' => (
+    is        => 'ro',
+    isa       => 'Str',
+    predicate => 'has_classname',
+);
+
+has 'filename' => (
+    is        => 'ro',
+    isa       => 'Str',
+    predicate => 'has_filename',
+);
+
 has 'result' => (
     is       => 'ro',
     isa      => 'TAP::Parser::Result',
