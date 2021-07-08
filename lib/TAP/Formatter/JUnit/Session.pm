@@ -63,6 +63,14 @@ sub _initialize {
 sub result {
     my ($self, $result) = @_;
 
+    if ($result->is_comment && $result->comment =~ /JUNIT-TEST-CLASSNAME:\s+(?<classname>\S+)/) {  
+      $ENV{JUNIT_TEST_CLASS} = $+{classname};
+    }
+
+    if ($result->is_comment && $result->comment =~ /JUNIT-TEST-FILENAME:\s+(?<filename>.*)/) {  
+      $ENV{JUNIT_TEST_FILE} = $+{filename};
+    }
+
     # except for a few things we don't want to process as a "test case", add
     # the test result to the queue.
     unless (    ($result->raw() =~ /^# Looks like you failed \d+ tests? of \d+/)
@@ -70,8 +78,10 @@ sub result {
              || ($result->raw() =~ /^# Looks like your test died before it could output anything/)
            ) {
         my $wrapped = TAP::Formatter::JUnit::Result->new(
-            'time'   => $self->get_time,
-            'result' => $result,
+            'time'       => $self->get_time,
+            'result'     => $result,
+            ('classname' => $ENV{JUNIT_TEST_CLASS}) x!! $ENV{JUNIT_TEST_CLASS},
+            ('filename'  => $ENV{JUNIT_TEST_FILE})  x!! $ENV{JUNIT_TEST_FILE},
         );
         $self->_queue_add($wrapped);
     }
@@ -147,6 +157,12 @@ sub close_test {
             my $case = $xml->testcase(
                 {
                     'name' => _get_testcase_name($result),
+                    (
+                        $result->has_filename ? ( filename => $result->filename ) : ()
+                    ),
+                    (
+                        $result->has_classname ? ( classname => $result->classname ) : ()
+                    ),
                     (
                         $timer_enabled ? ('time' => $duration) : ()
                     ),
